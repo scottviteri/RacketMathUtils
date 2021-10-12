@@ -1,5 +1,6 @@
 (require srfi/1)
 (require racket/list)
+(require racket/set)
 
 (define m '((1 2) (3 4)))
 (define (mat-row m j) (list-ref m j))
@@ -18,6 +19,8 @@
     (map (lambda (left-vec)
            (map (lambda (right-vec) (inner-prod left-vec right-vec)) m2t))
          m1)))
+
+(define (vec . l) (map list l))
 
 (define (v+ v1 v2) (map sum (zip v1 v2)))
 (define (m+ m1 m2)
@@ -112,10 +115,6 @@
 (define (find-solns n)
   (filter (lambda (x) (= 1 (modulo (* 2 (expt x 2)) n))) (iota n)))
 
-(define (sqrt-half n)
-  (let ([half (div 1 2 n)])
-    (if half ())))
-
 (define (sqrts5 n)
   (filter (lambda (x) (= 5 (modulo (* x x) n))) (iota n)))
 
@@ -153,7 +152,6 @@
 (define (normalize cycle)
   (remove-duplicates (filter (lambda (x) (not (= (car x) (cdr x)))) cycle)))
 
-;(define (rot n) (lambda (x) (modulo (+ x 1) n)))
 (define (rot n k)
   (normalize (map (lambda (x) (cons x (modulo (+ x k) n))) (iota n))))
 
@@ -167,11 +165,6 @@
            [domain (set-union d1 d2)])
     (normalize
      (set->list (set-map domain (lambda (x) (cons x (apply-cycle f (apply-cycle g x)))))))))
-
-;(define (repeat f n)
-;  (define (repeat-aux n x)
-;    (if (= n 0) x (repeat-aux (- n 1) (f x))))
-;  (lambda (x) (repeat-aux n x)))
 
 (define (mirror-pairs pairs)
   (append (map (lambda (x) (cons (cdr x) (car x))) pairs) pairs))
@@ -188,9 +181,6 @@
 
 (define (cycle-eq? c1 c2)
   (equal? (list->set c1) (list->set c2)))
-;(define (cycle-apply-eq? n)
-;  (lambda (c1 c2) (all (map (lambda (x) (= (apply-cycle c1 x) (apply-cycle c1 x)))
-;                            (iota n)))))
 
 (define (get-dihedral-symmetries n)
   (if (= 0 (modulo n 2))
@@ -210,18 +200,17 @@
 
 (define dihedral-cayley (compose cayley-table get-dihedral-symmetries))
 
+(define d4 (get-dihedral-symmetries 4))
+
 (define my-d4
   (let ([pos-half
          (list (rot 4 0) (rot 4 1) (face-flip 4 0) (vertex-flip 4 0))]
         [negate (lambda (x) (compose-cycles (rot 4 2) x))])
     (append pos-half (map negate pos-half))))
 
-
 ; now want to check that my proposed matrices form d8
 ; by checking their symmetries
 ; and seeing that they create the same symmetry table
-; but the symmetry table would look different with a diff order of symmetries
-;  maybe can get cycle structure form
 
 (define (cycle-to-matrix c n)
   (transpose (perm (map (lambda (x) (apply-cycle c x)) (iota n)))))
@@ -239,15 +228,14 @@
   (create-operation-table mats (compose (lambda (m) (m-mod m k)) m*) m=))
 
 (define (check-matrix-rep-mod symms mats k)
-  (m= (cayley-table symms)
-      (m-mod-cayley mats k)))
-
+  (m= (cayley-table symms) (m-mod-cayley mats k)))
 
 ;(let ([symms (get-dihedral-symmetries 3)])
 ;  (check-matrix-rep symms (cycles-to-matrices-naive symms 3))) ;#t
 
 ; now want to create matrices for a given dihedral algebra
 ;  first just create matrices for D8, precomputed
+
 (define finite-field-size 7)
 (define num-polygon-sides 8)
 (define sqrt-half 2)
@@ -269,5 +257,131 @@
       ((,x ,negx) (,negx ,negx)))))
 (define mats (append rots vflips fflips))
 ; (check-matrix-rep-mod (get-dihedral-symmetries 8) mats 7) #t
-
 ; now want to do more automatically
+
+; could make this faster via squares
+(define (m-mod-period m n)
+  (define (m-mod-period-aux curr-m curr-pow)
+    (if (m= curr-m (id 2)) curr-pow
+        (if (>= curr-pow 100)
+            #f
+            (m-mod-period-aux (m-mod (m* curr-m m) n) (+ curr-pow 1)))))
+  (m-mod-period-aux m 1))
+
+(define (xy-to-rot-mat x y) `((,x ,(- y)) (,y ,x)))
+
+(define (check-rotation x y field-size polygon-size)
+  (and (= 1 (modulo (+ (* x x) (* y y)) field-size))
+       (= polygon-size (m-mod-period (xy-to-rot-mat x y) field-size))))
+
+; looking for (x y) st x^2+y^2 = 1, and ((x -y) (y x))^k = ((1 0)(0 1))
+
+(define (find-rotation field-size rotation-size)
+  (findf (lambda (p) (check-rotation (car p) (cadr p) field-size rotation-size))
+         (cartesian-product (iota field-size) (iota field-size))))
+
+(define (accum f x n) (if (= n 1) (list x) (cons x (accum f (f x) (- n 1)))))
+(define (rot-mat-to-vertices m field-size polygon-size)
+  (accum (lambda (x) (m-mod (m* m x) field-size)) (vec 1 0) polygon-size))
+
+(define 8gon (rot-mat-to-vertices (xy-to-rot-mat 2 2) 7 8))
+(define 4gon (rot-mat-to-vertices (xy-to-rot-mat 0 1) 7 4))
+
+(define (col-vecs-to-mat . cols)
+  (map (lambda (l) (apply append l)) (apply zip cols)))
+
+(define (find-field-size polygon-size)
+  (findf (lambda (field-size) (find-rotation field-size polygon-size)) (iota 100)))
+
+;(map find-field-size (range 2 18)) ; '(2 9 3 19 9 29 7 27 19 43 9 53 29 59 17 67)
+; 17-gon lives in Z/67Z!
+
+(define f0 '((1 0) (0 6)))
+(define field-size 7)
+(define polygon-size 8)
+(define r '((2 2) (5 2)))
+
+(define (pt-to-rot pt field-size)
+  (m-mod (apply xy-to-rot-mat (apply append pt)) field-size))
+
+(define (points-to-rots pts field-size)
+  (map (lambda (pt) (pt-to-rot pt field-size)) pts))
+
+(define (points-to-vertex-flips pts field-size)
+  (let ([r (pt-to-rot (list-ref pts 1) field-size)]
+        [f `((1 0) (0 ,(- field-size 1)))]
+        [how-many (if (= 0 (modulo (length pts) 2)) (/ (length pts) 2) (length pts))]
+        [num-pts (length pts)])
+    (map (lambda (p)
+           (let ([i (car p)] [pt (cdr p)])
+             (m-mod
+              (m* (m-pow-mod r i field-size)
+                  (m* f (m-pow-mod r (- num-pts i) field-size)))
+              field-size)
+           ))
+         (take (enumerate pts) how-many))))
+
+(define (points-to-face-flips pts field-size)
+  (let ([r (pt-to-rot (list-ref pts 1) field-size)]
+        [f `((1 0) (0 ,(- field-size 1)))]
+        [how-many (if (= 0 (modulo (length pts) 2)) (/ (length pts) 2) 0)]
+        [num-pts (length pts)])
+    (map (lambda (p)
+           (let ([i (car p)] [pt (cdr p)])
+             (m-mod
+              (m* (m-pow-mod r i field-size)
+                  (m* f (m-pow-mod r (- num-pts i 1) field-size)))
+              field-size)))
+         (take (enumerate pts) how-many))))
+
+(define (points-to-matrices pts field-size)
+  (append (points-to-rots pts field-size)
+          (points-to-vertex-flips pts field-size)
+          (points-to-face-flips pts field-size)))
+
+(define (get-dihedral-matrices field-size polygon-size)
+  (letrec ([point1 (find-rotation field-size polygon-size)]
+           [vertices (rot-mat-to-vertices (apply xy-to-rot-mat point1)
+                                          field-size polygon-size)])
+    (points-to-matrices vertices field-size)))
+
+(define (check-matrices polygon-size)
+  (let ([field-size (find-field-size polygon-size)])
+    (m= (dihedral-cayley polygon-size)
+        (m-mod-cayley (get-dihedral-matrices field-size polygon-size) field-size))))
+
+;(get-dihedral-matrices 67 17)
+;'(((1 0) (0 1))
+;  ((7 35) (32 7))
+;  ((30 21) (46 30))
+;  ((11 58) (9 11))
+;  ((57 54) (13 57))
+;  ((50 28) (39 50))
+;  ((40 3) (64 40))
+;  ((41 14) (53 41))
+;  ((65 59) (8 65))
+;  ((65 8) (59 65))
+;  ((41 53) (14 41))
+;  ((40 64) (3 40))
+;  ((50 39) (28 50))
+;  ((57 13) (54 57))
+;  ((11 9) (58 11))
+;  ((30 46) (21 30))
+;  ((7 32) (35 7))
+;  ((1 0) (0 66))
+;  ((30 46) (46 37))
+;  ((57 13) (13 10))
+;  ((40 64) (64 27))
+;  ((65 8) (8 2))
+;  ((41 14) (14 26))
+;  ((50 28) (28 17))
+;  ((11 58) (58 56))
+;  ((7 35) (35 60))
+;  ((7 32) (32 60))
+;  ((11 9) (9 56))
+;  ((50 39) (39 17))
+;  ((41 53) (53 26))
+;  ((65 59) (59 2))
+;  ((40 3) (3 27))
+;  ((57 54) (54 10))
+;  ((30 21) (21 37)))

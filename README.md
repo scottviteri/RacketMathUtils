@@ -1,6 +1,7 @@
 # RacketMathUtils
 Unorganized utilities for linear algebra, abstract algebra, and modular arithmetic.
 
-Includes and verifies an embedding of the 8th dihedral group in 2 by 2 matrices over Z/5Z.
-This was found by searching for Z/nZ such there was an eigth root of unity and there was an x st 2x^2=1.
-This procedure could likely be generalized to other dihedral groups dN where the vertices are representable in terms of radicals -- namely where the odd prime factors of N are Fermat primes.
+Creates and verifies embeddings of dihedral groups into 2-by-2 matrices over Z/nZ.
+
+To embed the dth dihedral group, we search x,y in Z/nZ such that (x,y) is a kth root of unity and x^2+y^2=1.
+This seems to work for all dihedral groups -- not just those constructible with a ruler and compass for instance.

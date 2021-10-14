@@ -1,54 +1,49 @@
+#lang racket
+
 (require srfi/1)
-(require racket/list)
+(require (only-in racket/list remove-duplicates cartesian-product index-of))
 (require racket/set)
+(require (only-in relation partial app curry andf onto))
 
 (define m '((1 2) (3 4)))
 (define (mat-row m j) (list-ref m j))
 
 (define (mat-col m i) (map car m))
 (define (mat-ind m j i) (list-ref (mat-row m j) i))
-(define (curry f) (lambda (x) (apply f x)))
-(define sum (curry +))
-(define mul (curry *))
+(define sum (partial apply +))
+(define mul (partial apply *))
 
-(define (inner-prod v1 v2) (sum (map mul (zip v1 v2))))
-(define transpose (curry zip))
+(define (v* v1 v2) (sum (map mul (zip v1 v2))))
+
+(define transpose (partial apply zip))
 
 (define (m* m1 m2)
   (let ([m2t (transpose m2)])
-    (map (lambda (left-vec)
-           (map (lambda (right-vec) (inner-prod left-vec right-vec)) m2t))
-         m1)))
+    (map (lambda (left-vec) (map (app v* left-vec _) m2t)) m1)))
 
 (define (vec . l) (map list l))
 
 (define (v+ v1 v2) (map sum (zip v1 v2)))
-(define (m+ m1 m2)
-  (map (curry v+) (zip m1 m2)))
+(define (m+ m1 m2) (map (partial apply v+) (zip m1 m2)))
 
-(define (deep-apply f m)
-  (map (lambda (row) (map f row)) m))
-
-(define (s* k m)
-  (deep-apply (lambda (x) (* k x)) m))
+(define (deep-apply f m) (map (partial map f) m))
+(define (s* k m) (deep-apply (partial * k) m))
 
 (define (impulse i len) (map (lambda (x) (if (= x i) 1 0)) (iota len)))
-
-(define (id dim)
-  (map (lambda (i) (impulse i dim)) (iota dim)))
+(define (m-id dim) (map (app impulse _ dim) (iota dim)))
 
 (define v= equal?)
-(define (all l) (fold (lambda (x y) (and x y)) #t l))
+(define all (curry fold andf #t))
 
 (define (m= m1 m2)
   (and (eq? (length m1) (length m2))
-       (all (map (curry v=) (zip m1 m2)))))
+       (all (map (partial apply v=) (zip m1 m2)))))
 
 (define (square m) (m* m m))
 
 (define (m-pow m n)
   (define (odd? n) (= 1 (modulo n 2)))
-  (if (= n 0) (id (length m))
+  (if (= n 0) (m-id (length m))
       (if (= n 1) m
           (if (odd? n)
               (m* m (m-pow m (- n 1)))
@@ -79,7 +74,7 @@
   (map (lambda (m) (m-mod m mod)) (all-matrices dim top)))
 
 (define (test condition dim top)
-  (let ([target (id dim)]
+  (let ([target (m-id dim)]
         [ms (all-matrices dim top)])
     (filter (condition m target) ms)))
 
@@ -89,7 +84,7 @@
 
 (define (perm l)
   ;input must be set= (iota (length l))
-  (map (lambda (i) (impulse i (length l))) l))
+  (map (app impulse _ (length l)) l))
 
 (define (rot-mat n) (perm (map (lambda (x) (modulo x n)) (iota n 1))))
 (define (conjoin m1 m2)
@@ -114,10 +109,6 @@
 
 (define (find-solns n)
   (filter (lambda (x) (= 1 (modulo (* 2 (expt x 2)) n))) (iota n)))
-
-(define (sqrts5 n)
-  (filter (lambda (x) (= 5 (modulo (* x x) n))) (iota n)))
-
 (define (quats n)
   (filter (lambda (x) (= 1 (modulo (* x x x x) n))) (iota n)))
 
@@ -129,14 +120,11 @@
 (define (primes-up-to n)
   (filter is-prime (iota (- n 1) 2)))
 
-(define (pow1 x n)
-  (if (= x 0) 0
-      (let ([l (filter (lambda (k) (= 1 (modulo (expt x k) n)))
-                       (iota (- n 1) 1))])
-        (if (null? l) n (car l)))))
-
-(define (periodicities n)
-  (map (lambda (x) (pow1 x n)) (iota n)))
+(define (power-period base domain-size)
+  (if (= base 0) 0
+      (let ([l (filter (lambda (k) (= 1 (modulo (expt base k) domain-size)))
+                       (iota (- domain-size 1) 1))])
+        (if (null? l) domain-size (car l)))))
 
 (define (check m) (and (= (caar m) (caadr m)) (= (cadar m) (- 5 (cadadr m)))))
 
@@ -145,7 +133,7 @@
 (define (m-per m mod)
   (define (m-per-aux m orig cnt)
     (if (> cnt 100) 10
-      (let ([meq (m= (id 2) m)])
+      (let ([meq (m= (m-id 2) m)])
         (if meq cnt (m-per-aux (m-mod (m* orig m) mod) orig (+ cnt 1))))))
   (m-per-aux m m 1))
 
@@ -160,11 +148,13 @@
     (if result (cdr result) x)))
 
 (define (compose-cycles f g)
-  (letrec ([d1 (list->set (map car f))]
-           [d2 (list->set (map car g))]
-           [domain (set-union d1 d2)])
-    (normalize
-     (set->list (set-map domain (lambda (x) (cons x (apply-cycle f (apply-cycle g x)))))))))
+  (normalize
+   (set->list
+    (letrec ([d1 (list->set (map car f))]
+             [d2 (list->set (map car g))]
+             [domain (set-union d1 d2)])
+      (set-map domain
+               (lambda (x) (cons x (apply-cycle f (apply-cycle g x)))))))))
 
 (define (mirror-pairs pairs)
   (append (map (lambda (x) (cons (cdr x) (car x))) pairs) pairs))
@@ -233,36 +223,9 @@
 ;(let ([symms (get-dihedral-symmetries 3)])
 ;  (check-matrix-rep symms (cycles-to-matrices-naive symms 3))) ;#t
 
-; now want to create matrices for a given dihedral algebra
-;  first just create matrices for D8, precomputed
-
-(define finite-field-size 7)
-(define num-polygon-sides 8)
-(define sqrt-half 2)
-
-(define r `((,sqrt-half ,(- finite-field-size sqrt-half)) (,sqrt-half ,sqrt-half)))
-(define rots (m-pows r num-polygon-sides finite-field-size))
-(define vflips
-  (map (lambda (m) (m-mod m finite-field-size))
-       '(((1 0) (0 -1))
-         ((0 1) (1 0))
-         ((-1 0) (0 1))
-         ((0 -1) (-1 0)))))
-(define fflips
-  (let ([x sqrt-half]
-        [negx (- finite-field-size sqrt-half)])
-    `(((,x ,x) (,x ,negx))
-      ((,negx ,x) (,x ,x))
-      ((,negx ,negx) (,negx ,x))
-      ((,x ,negx) (,negx ,negx)))))
-(define mats (append rots vflips fflips))
-; (check-matrix-rep-mod (get-dihedral-symmetries 8) mats 7) #t
-; now want to do more automatically
-
-; could make this faster via squares
 (define (m-mod-period m n)
   (define (m-mod-period-aux curr-m curr-pow)
-    (if (m= curr-m (id 2)) curr-pow
+    (if (m= curr-m (m-id 2)) curr-pow
         (if (>= curr-pow 100)
             #f
             (m-mod-period-aux (m-mod (m* curr-m m) n) (+ curr-pow 1)))))
@@ -275,7 +238,6 @@
        (= polygon-size (m-mod-period (xy-to-rot-mat x y) field-size))))
 
 ; looking for (x y) st x^2+y^2 = 1, and ((x -y) (y x))^k = ((1 0)(0 1))
-
 (define (find-rotation field-size rotation-size)
   (findf (lambda (p) (check-rotation (car p) (cadr p) field-size rotation-size))
          (cartesian-product (iota field-size) (iota field-size))))
@@ -385,3 +347,65 @@
 ;  ((40 3) (3 27))
 ;  ((57 54) (54 10))
 ;  ((30 21) (21 37)))
+
+; now would like to embed dN in automorphisms on Z/nZ
+(define (fxn-rot k n) (lambda (x) (modulo (+ k x) n)))
+(define (fxn-vflip k n) (lambda (x) (modulo (- (* 2 k) x) n)))
+(define (fxn-fflip k n) (lambda (x) (modulo (- (+ (* 2 k) 1) x) n)))
+(define (automorphs n)
+  (if (= 0 (modulo n 2))
+      (append (map (app fxn-rot _ n) (iota n))
+              (map (app fxn-vflip _ n) (iota (/ n 2)))
+              (map (app fxn-fflip _ n) (iota (/ n 2))))
+      (append (map (app fxn-rot _ n) (iota n))
+              (map (app fxn-vflip _ n) (iota n)))))
+(define (fxn-eq f1 f2 n) (equal? (map f1 (iota n)) (map f2 (iota n))))
+(define (fxn-cayley n)
+  (create-operation-table (automorphs n) compose (app fxn-eq _ _ n)))
+; (m= (dihedral-cayley 8) (fxn-cayley 8)) ;8
+
+; so what really is sqrt 2?
+; it is a spec of fxns that when applied twice, multiplies each element in Z/nZ by 2
+
+(define (map-and-show f l) (map cons l (map f l)))
+;(map-and-show (partial * 2) (range 2 5)) ;'((2 . 4) (3 . 6) (4 . 8))
+
+(define (fxn-extention f n)
+  ;(fxn-extention (partial * 2) 3) ;'((0 . 0) (1 . 2) (2 . 1))
+  (map-and-show (compose (lambda (x) (modulo x n)) f) (iota n)))
+
+(define (cycle-starting-at ext k)
+    (define (cycle-starting-at-aux k seen-before)
+      (let ([next (apply-cycle ext k)])
+        (if (member next seen-before)
+            seen-before
+            (cycle-starting-at-aux next (cons next seen-before)))))
+    (cycle-starting-at-aux k '()))
+
+(define (extention-to-cycles ext)
+  ;(extention-to-cycles (fxn-extention (partial * 2) 3)) ;'((0) (1 2))
+  (define (extention-to-cycles-aux cycles uncovered)
+    (if (set-empty? uncovered) cycles
+        (let ([next (cycle-starting-at ext (set-first uncovered))])
+          (extention-to-cycles-aux
+           (cons next cycles)
+           (set-subtract uncovered (list->set next))))))
+  (reverse (extention-to-cycles-aux '() (list->set (map car ext)))))
+
+(define (odds n) (iota n 1 2))
+(map-and-show
+ (lambda (n) (extention-to-cycles (fxn-extention (partial * 2) n)))
+ (odds 10))
+;'((1 (0))
+;  (3 (1 2) (0))
+;  (5 (1 3 4 2) (0))
+;  (7 (1 4 2) (5 6 3) (0))
+;  (9 (1 5 7 8 4 2) (3 6) (0))
+;  (11 (1 6 3 7 9 10 5 8 4 2) (0))
+;  (13 (1 7 10 5 9 11 12 6 3 8 4 2) (0))
+;  (15 (1 8 4 2) (5 10) (9 12 6 3) (13 14 7 11) (0))
+;  (17 (1 9 13 15 16 8 4 2) (5 11 14 7 12 6 3 10) (0))
+;  (19 (1 10 5 12 6 3 11 15 17 18 9 14 7 13 16 8 4 2) (0)))
+
+; primes give equal length cycles (besides 0)
+; what causes the smaller lengths for non prime Z/nZ

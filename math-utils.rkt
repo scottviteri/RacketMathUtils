@@ -374,25 +374,35 @@
   ;(fxn-extention (partial * 2) 3) ;'((0 . 0) (1 . 2) (2 . 1))
   (map-and-show (compose (lambda (x) (modulo x n)) f) (iota n)))
 
+(define (list-rotate l) (append (cdr l) (list (car l))))
+(define (list-rectify l)
+  (if (eq? (car l) (apply min l)) l (list-rectify (list-rotate l))))
+
 (define (cycle-starting-at ext k)
     (define (cycle-starting-at-aux k seen-before)
-      (let ([next (apply-cycle ext k)])
-        (if (member next seen-before)
-            seen-before
-            (cycle-starting-at-aux next (cons next seen-before)))))
-    (cycle-starting-at-aux k '()))
+      (if (< 1000 (length seen-before)) 'timeout
+          (let ([next (apply-cycle ext k)])
+            (if (member next seen-before)
+                seen-before
+                (cycle-starting-at-aux next (cons next seen-before))))))
+  (list-rectify (reverse (cycle-starting-at-aux k '()))))
 
 (define (extention-to-cycles ext)
   ;(extention-to-cycles (fxn-extention (partial * 2) 3)) ;'((0) (1 2))
   (define (extention-to-cycles-aux cycles uncovered)
-    (if (set-empty? uncovered) cycles
-        (let ([next (cycle-starting-at ext (set-first uncovered))])
-          (extention-to-cycles-aux
-           (cons next cycles)
-           (set-subtract uncovered (list->set next))))))
-  (reverse (extention-to-cycles-aux '() (list->set (map car ext)))))
+    (if (member 'timeout cycles) 'timeout
+        (if (set-empty? uncovered) cycles
+            (let ([next (cycle-starting-at ext (set-first uncovered))])
+              (extention-to-cycles-aux
+               (cons next cycles)
+               (set-subtract uncovered (list->set next)))))))
+  (sort (extention-to-cycles-aux '() (list->set (map car ext)))
+        (lambda (x y) (< (car x) (car y)))))
 
-(define (odds n) (iota n 1 2))
+(define (same-residue total-count modulus residue)
+  (iota total-count residue modulus))
+(define (odds n) (same-residue n 2 1))
+
 (map-and-show
  (lambda (n) (extention-to-cycles (fxn-extention (partial * 2) n)))
  (odds 10))
@@ -409,3 +419,47 @@
 
 ; primes give equal length cycles (besides 0)
 ; what causes the smaller lengths for non prime Z/nZ
+
+(define (get-mult-cycles n k)
+  (map (lambda (x) x) (extention-to-cycles (fxn-extention (partial * k) n))))
+
+(map-and-show
+ (lambda (n)
+   (map (partial get-mult-cycles n) '(2 3 6)))
+ (cddr (primes-up-to 20)))
+
+(define (gcd a b) (if (= b 0) a (gcd b (modulo a b))))
+(define (coprime? a b) (= 1 (gcd a b)))
+
+(map-and-show (partial coprime? 5) (iota 10 3))
+;'((3 . #t)
+;  (4 . #t)
+;  (5 . #f)
+;  (6 . #t)
+;  (7 . #t)
+;  (8 . #t)
+;  (9 . #t)
+;  (10 . #f)
+;  (11 . #t)
+;  (12 . #t))
+(define (h- n) (/ (- n 1) 2))
+(define (h+ n) (/ (+ n 1) 2))
+;(all (map (lambda (n) (coprime? n (/ (+ n 1) 2))) (cdr (odds 100)))) ;#t
+(define (q- n) ; assuming prime
+  (if (= 1 (modulo n 4)) (/ (- n 1) 4) (/ (- (* 3 n) 1) 4)))
+(define (q+ n) ; assuming prime
+  (if (= 1 (modulo n 4)) (/ (+ (* 3 n) 1) 4) (/ (+ n 1) 4)))
+
+(define (thirds n)
+  (list (/ (- n 1) 3) (/ (+ n 2) 3) (/ (+ (* 2 n) 1) 3) (/ (- (* 2 n) 2) 3)))
+
+(define (binary-to-num l)
+  (define (binary-to-num-aux l)
+    (if (null? l) 0 (+ (car l) (* 2 (binary-to-num-aux (cdr l))))))
+  (binary-to-num-aux (reverse l)))
+
+(define nums
+  (map (compose binary-to-num (app make-list _ 1)) (iota 10 2)))
+(map (lambda (x) (length (cadr (get-mult-cycles x 2)))) nums)
+;'(2 3 4 5 6 7 8 9 10 11)
+; conjecture correct!

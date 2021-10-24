@@ -4,6 +4,8 @@
 (require (only-in racket/list remove-duplicates cartesian-product index-of))
 (require racket/set)
 (require (only-in relation partial app curry andf onto))
+(require racket/match)
+(require racket/stream)
 
 (define m '((1 2) (3 4)))
 (define (mat-row m j) (list-ref m j))
@@ -28,6 +30,14 @@
 
 (define (deep-apply f m) (map (partial map f) m))
 (define (s* k m) (deep-apply (partial * k) m))
+
+(define (det2by2 m)
+  (match m [(list (list a b) (list c d)) (- (* a d) (* b c))]))
+
+(define (invert2by2 m)
+  (match m [(list (list a b) (list c d))
+            (s* (/ 1 (det2by2 m))
+                (list (list d (- b)) (list (- c) a)))]))
 
 (define (impulse i len) (map (lambda (x) (if (= x i) 1 0)) (iota len)))
 (define (m-id dim) (map (app impulse _ dim) (iota dim)))
@@ -67,6 +77,9 @@
       (if (< (length l) n) (cons l '())
           (cons (take l n) (split (drop l n) n)))))
 
+(define (make-mat dim l) (split l dim))
+; (define m (make-mat 2 '(1 2 3 4)))
+
 (define (all-matrices dim top)
   (map (lambda (l) (split l dim)) (all-vals dim top)))
 
@@ -97,6 +110,9 @@
   (map (lambda (x) (display x) (newline)) m) 1)
 
 (define six-periodic (conjoin (rot-mat 3) (rot-mat 2)))
+
+(define (map-mod n)
+  (lambda (f l) (map (compose (app modulo _ n) f) l)))
 
 (define (sqrts n)
   (filter (lambda (x) (= 1 (modulo (* x x) n))) (iota n)))
@@ -430,6 +446,7 @@
 
 (define (gcd a b) (if (= b 0) a (gcd b (modulo a b))))
 (define (coprime? a b) (= 1 (gcd a b)))
+(define (get-coprimes a) (filter (partial coprime? a) (range 2 a)))
 
 (map-and-show (partial coprime? 5) (iota 10 3))
 ;'((3 . #t)
@@ -460,6 +477,121 @@
 
 (define nums
   (map (compose binary-to-num (app make-list _ 1)) (iota 10 2)))
-(map (lambda (x) (length (cadr (get-mult-cycles x 2)))) nums)
+;(map (lambda (x) (length (cadr (get-mult-cycles x 2)))) nums)
 ;'(2 3 4 5 6 7 8 9 10 11)
 ; conjecture correct!
+(define (find-index f l) (car (findf (compose f cadr) (enumerate l))))
+
+(define (get-frac-mod numer denom field-size)
+  (find-index (partial = numer)
+              ((map-mod field-size) (partial * denom) (iota field-size))))
+
+; has to do with coprime functions
+; want 1/denom mod field-size
+; 1/denom = (k*field-size + 1)/denom where k*field-size = -1 mod denom
+; so need k = -1/field-size mod denom
+; k = (k2*denom - 1)/field-size where k2*denom = 1 mod field-size
+; so need k2 = 1/denom mod field-size <- cycle
+; so this is not a method to compute
+;  just says that (1/denom mod field-size) and (-1/field-size mod denom)
+;  have the same information
+
+(define (check-flippy-property denom field-size)
+  (let ([k2 (get-frac-mod 1 denom field-size)]
+        [k (get-frac-mod (- denom 1) field-size denom)])
+    (and
+     (eq? k (/ (- (* k2 denom) 1) field-size))
+     (eq? k2 (/ (+ (* k field-size) 1) denom)))))
+
+;(let ([field-size 10])
+;  (all (map (app check-flippy-property _ field-size)
+;            (get-coprimes field-size)))) ;#t
+; so instead of finding  1/16 mod 9, can find -1/9 mod 16
+
+; what is the deal with euclidian domains, and is Z/nZ one?
+; can make an ordering on it based on cycle structure of *k
+;  namely use denominators as an ordering
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+; thinking about sqrt(2) again
+;  how to quickly compute it in bitvectors?
+;  how to quickly compute in general when it has an exact soln?
+
+; simple frac or newton's method w/ x^2 - 2
+
+(define (simple-cont-frac coeffs)
+  ;(simple-cont-frac '(1 2 2 2 2)) ; 41/29
+  ; but this does not work on a stream
+  (define (simple-cont-frac-aux coeffs result)
+    (if (null? coeffs) result
+        (let ([m (make-mat 2 (list (car coeffs) 1 1 0))])
+          (simple-cont-frac-aux (cdr coeffs) (m* m result)))))
+  (match (simple-cont-frac-aux (reverse coeffs) (vec 1 0))
+    [(list (list n) (list d)) (/ n d)]))
+
+(define (f next-coeff)
+  (define (f-aux next-coeff s-1 s-2 s-3)
+    (if (not s-1) (let ([result (vec next-coeff 1)])
+                    (cons result (app f-aux _ result #f #f)))
+    (if (not s-2) (letrec ([prev-coeff (caar s-1)]
+                           [result (vec (+ 1 (* prev-coeff next-coeff)) next-coeff)])
+                    (cons result (app f-aux _ result s-1 #f)))
+    (if (not s-3)
+        (match-let ([(list (list a) _) s-2]
+                    [(list _ (list b)) s-1]
+                    [c next-coeff])
+          (let ([result (vec (+ (* a b c) a c) (+ 1 (* b c)))])
+            (cons result (app f-aux _ result s-1 s-2))))
+    (match-let ([(list (list n-1) (list d-1)) s-1]
+                [(list (list n-2) (list d-2)) s-2]
+                [(list (list n-3) (list d-3)) s-3])
+      (letrec ([n (+ (* next-coeff n-1) (/ (* n-2 d-1) d-2))]
+               [d (+ d-3 (* next-coeff d-1))]
+               [m (make-mat 2 (list next-coeff (/ n-1 d) (/ d-2 n) next-coeff))]
+               [result (m* m s-1)])
+        (cons result (app f-aux _ result s-1 s-2))))))))
+  (f-aux next-coeff #f #f #f))
+
+(define (apply-stream f coeffs)
+  (if (null? coeffs) '()
+      (match-let ([(cons c new-f) (f (car coeffs))])
+        (cons c (apply-stream new-f (cdr coeffs))))))
+
+(define (get-m coeff) (make-mat 2 (list 0 1 1 (- coeff))))
+(define tsra (function (lambda (x) (/ 1 (- x 1))) -1 3))
+
+(define (stat-diff f)
+  (lambda (x) (let ([dx .001]) (/ (- (f (+ x dx)) (f x)) dx))))
+
+(define p '((0 . 2) (3 . 4))) ; 2 + 4x^3
+(define dec (app - _ 1))
+
+(define (diff poly)
+  ; (diff p) ; 12x^2
+  (filter-map (match-lambda ((cons power coeff)
+                             (if (= 0 power) #f (cons (dec power) (* power coeff)))))
+              poly))
+
+(define (remove-1-power poly)
+  (filter-map (match-lambda ((cons power coeff)
+                             (if (= 0 power) #f (cons (dec power) coeff))))
+              poly))
+
+(define (apply-poly poly x)
+  ;(apply-poly p 1) ;6
+  (if (null? poly) 0
+        (let ([constant (assoc 0 poly)]
+              [lowered-poly (remove-1-power poly)])
+          (+ (if constant (cdr constant) 0)
+             (* x (apply-poly lowered-poly x))))))
+
+(define (repeat f k)
+  (lambda (x) (if (= k 1) (f x) (f ((repeat f (dec k)) x)))))
+
+(define (k-diff poly k) ((repeat diff k) poly))
+(define (k-stat-diff f k) ((repeat stat-diff k) f))
+;((k-stat-diff (app expt _ 2) 1) 3) ;6.000999999999479
+;((k-stat-diff (app expt _ 2) 2) 3) ;2.000000000279556
+
+; compare convergents to newton's to 2nd order deriv

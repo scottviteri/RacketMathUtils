@@ -6,6 +6,7 @@
 (require (only-in relation partial app curry andf onto))
 (require racket/match)
 (require racket/stream)
+(require plot)
 
 (define m '((1 2) (3 4)))
 (define (mat-row m j) (list-ref m j))
@@ -524,13 +525,20 @@
   ;(simple-cont-frac '(1 2 2 2 2)) ; 41/29
   ; but this does not work on a stream
   (define (simple-cont-frac-aux coeffs result)
+    ;(display (if (not (= 0 (caadr result))) (/ (caar result) (caadr result)) result)) (newline)
     (if (null? coeffs) result
         (let ([m (make-mat 2 (list (car coeffs) 1 1 0))])
           (simple-cont-frac-aux (cdr coeffs) (m* m result)))))
   (match (simple-cont-frac-aux (reverse coeffs) (vec 1 0))
     [(list (list n) (list d)) (/ n d)]))
 
-(define (f next-coeff)
+(define (frac-to-cont-frac frac)
+  ; (equal? (/ 113 17) (simple-cont-frac (frac-to-cont-frac (/ 113 17)))) ;#t
+  ;(display frac) (newline)
+  (if (or (< frac 1) (integer? frac)) (list frac)
+      (cons (floor frac) (frac-to-cont-frac (/ 1 (- frac (floor frac)))))))
+
+(define (simple-frac-compute-in-order next-coeff) ; yeah this is totally wrong
   (define (f-aux next-coeff s-1 s-2 s-3)
     (if (not s-1) (let ([result (vec next-coeff 1)])
                     (cons result (app f-aux _ result #f #f)))
@@ -564,8 +572,9 @@
 (define (stat-diff f)
   (lambda (x) (let ([dx .001]) (/ (- (f (+ x dx)) (f x)) dx))))
 
-(define p '((0 . 2) (3 . 4))) ; 2 + 4x^3
+(define test-poly '((0 . 2) (3 . 4))) ; 2 + 4x^3
 (define dec (app - _ 1))
+(define inc (app + _ 1))
 
 (define (diff poly)
   ; (diff p) ; 12x^2
@@ -573,16 +582,27 @@
                              (if (= 0 power) #f (cons (dec power) (* power coeff)))))
               poly))
 
-(define (remove-1-power poly)
+(define (decrement-power poly)
   (filter-map (match-lambda ((cons power coeff)
                              (if (= 0 power) #f (cons (dec power) coeff))))
               poly))
+
+(define (increment-power poly)
+  (filter-map (match-lambda ((cons power coeff)
+                             (if (= 0 power) #f (cons (inc power) coeff))))
+              poly))
+
+(define (k-increment-power poly k)
+  (filter-map (match-lambda ((cons power coeff)
+                             (if (= 0 power) #f (cons (+ k power) coeff))))
+              poly))
+
 
 (define (apply-poly poly x)
   ;(apply-poly p 1) ;6
   (if (null? poly) 0
         (let ([constant (assoc 0 poly)]
-              [lowered-poly (remove-1-power poly)])
+              [lowered-poly (decrement-power poly)])
           (+ (if constant (cdr constant) 0)
              (* x (apply-poly lowered-poly x))))))
 
@@ -595,3 +615,120 @@
 ;((k-stat-diff (app expt _ 2) 2) 3) ;2.000000000279556
 
 ; compare convergents to newton's to 2nd order deriv
+(define (close x y)
+  (< (magnitude (- x y)) .001))
+
+(define (find-fixed-pt f start [verbose #f] [fuel #f])
+  ;(close (+ 1 (sqrt 2)) (find-fixed-pt (lambda (x) (+ 2 (/ 1 x))) 1)) ;#t
+  ;(close (- 1 (sqrt 2)) (find-fixed-pt (lambda (x) (/ 1 (- x 2))) 1)) ;#t
+  (define (find-fixed-pt-aux prev fuel)
+    (if (and (integer? fuel) (= 0 fuel)) prev
+        (begin (if verbose (begin (display prev) (newline)) 1)
+               (let ([next (f prev)])
+                 (if (close next prev) next
+                     (find-fixed-pt-aux next (if fuel (dec fuel) fuel)))))))
+  (exact->inexact (find-fixed-pt-aux start fuel)))
+
+(define (is-stable-pt? f x)
+  ;(is-stable-pt? (lambda (x) (+ 2 (/ 1 x))) (+ 1 (sqrt 2))) ;t
+  (let ([df (stat-diff f)])
+    (and (close x (f x)) (< (abs (df x)) 1))))
+
+(define (solve-quad poly)
+  ; require max degree = 2
+  ; (solve-quad '((2 . 1) (0 . 1))) ;'(0+1i 0-1i)
+  (let ([a (if (assoc 2 poly) (cdr (assoc 2 poly)) 0)]
+        [b (if (assoc 1 poly) (cdr (assoc 1 poly)) 0)]
+        [c (if (assoc 0 poly) (cdr (assoc 0 poly)) 0)])
+    (list
+     (/ (+ (- b) (sqrt (- (expt b 2) (* 4 a c)))) (* 2 a))
+     (/ (- (- b) (sqrt (- (expt b 2) (* 4 a c)))) (* 2 a)))))
+
+; can do symbolically or numerically
+(define (newtons-method-stat f start)
+  ; (close (sqrt 2) (newtons-method-stat (lambda (x) (- (* x x) 2)) 1)) ;#t
+  (let ([df (stat-diff f)])
+    (find-fixed-pt (lambda (x) (- x (/ (f x) (df x)))) start)))
+
+(define (newtons-method poly start)
+  ; (close (sqrt 2) (newtons-method '((2 . 1) (0 . -2)) 1)) ;#t
+  (let ([df (diff poly)])
+    (find-fixed-pt (lambda (x) (- x (/ (apply-poly poly x) (apply-poly df x)))) start)))
+
+; newton's sqrt 2
+(define (cont-frac-sqrt2 x) (/ (+ 2 x) (+ 1 x)))
+
+; (close (sqrt 2) (find-fixed-pt cont-frac-sqrt2 1)) ;t
+(define (cont-frac-neg-sqrt2 x) (+ -1 (/ 1 (+ -1 x))))
+
+(define (newton-sqrt2 x) (/ (+ (* x x) 2) (* 2 x)))
+(plot (list (function (lambda (x) x) -2 2)
+            (function cont-frac-sqrt2 -2 2)
+            (function cont-frac-neg-sqrt2 -2 2)
+            (function newton-sqrt2 -2 2))
+      #:y-min -2 #:y-max 2)
+
+(define (scalar*poly s p)
+  (map (match-lambda ((cons pow coeff) (cons pow (* s coeff)))) p))
+(define (get-keys alst) (list->set (map car alst)))
+
+(define (poly+ p1 p2)
+  (set->list (set-map (set-union (get-keys p1) (get-keys p2))
+                      (lambda (k) (cons k (let ([m1 (assoc k p1)] [m2 (assoc k p2)])
+                                            (if (not m1) (cdr m2)
+                                            (if (not m2) (cdr m1)
+                                            (+ (cdr m1) (cdr m2))))))))))
+
+(define (poly* p1 p2)
+  (fold poly+ '()
+        (map (match-lambda
+               ((cons pow coeff) (k-increment-power (scalar*poly coeff p2) pow)))
+             p1)))
+
+
+(define (factorial n) (if (= n 0) 1 (* n (factorial (- n 1)))))
+(define (choose n k) (/ (factorial n) (* (factorial k) (factorial (- n k)))))
+(define (binomial-poly c n)
+  (map (lambda (k) (cons k (* (choose n k) (expt (- c) (- n k)))))
+       (range (inc n))))
+
+(define (poly-shift poly c)
+  (fold poly+ '()
+        (map (match-lambda ((cons power coeff)
+                            (scalar*poly coeff (binomial-poly c power))))
+             poly)))
+
+(define (poly-lift n) (list (cons 0 n)))
+
+; in newton's both positive and negative roots are stable
+; in cont-frac, only positive is stable, though can be rewritten to make neg stable
+(define (quadratic-newtons-method poly pt)
+  (letrec ([dp (diff poly)]
+           [d2p (diff dp)]
+           [fx (apply-poly poly pt)])
+    (letrec ([taylor (list (cons 0 fx)
+                           (cons 1 (apply-poly dp pt))
+                           (cons 2 (/ (apply-poly d2p pt) 2)))]
+             [shifted-taylor (poly-shift taylor pt)]
+             [new-zeros (solve-quad shifted-taylor)])
+      (car new-zeros))))
+
+(define sqrt2-poly '((2 . 1) (0 . -2)))
+(define cubrt2-poly '((3 . 1) (0 . -2)))
+(define crazy-poly '((7 . 1) (5 . -5) (4 . 5/2) (3 . 1) (2 . -2) (0 . 9)))
+;(close (find-fixed-pt (partial newtons-method crazy-poly) 2)
+;       (find-fixed-pt (partial quadratic-newtons-method crazy-poly) 2))
+
+(define (quadratic-minimizing-newtons-method poly pt)
+  ;(find-fixed-pt (partial quadratic-minimizing-newtons-method '((4 . 1) (0 . -2))) 9 #t 20)
+  ; currently not converging
+  (letrec ([dp (diff poly)]
+           [d2p (diff dp)]
+           [fx (apply-poly poly pt)])
+    (letrec ([taylor (list (cons 0 fx)
+                           (cons 1 (apply-poly dp pt))
+                           (cons 2 (/ (apply-poly d2p pt) 2)))]
+             [shifted-taylor (poly-shift taylor pt)])
+      (match shifted-taylor
+        ((list (cons 2 a) (cons 1 b) (cons 0 c) ...)
+         (exact->inexact (- (/ b (* 2 a)))))))))

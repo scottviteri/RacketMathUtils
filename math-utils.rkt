@@ -8,6 +8,9 @@
 (require racket/stream)
 (require plot)
 
+(provide (all-defined-out))
+
+
 (define m '((1 2) (3 4)))
 (define (mat-row m j) (list-ref m j))
 
@@ -15,6 +18,8 @@
 (define (mat-ind m j i) (list-ref (mat-row m j) i))
 (define sum (partial apply +))
 (define mul (partial apply *))
+(define dec (app - _ 1))
+(define inc (partial + 1))
 
 (define (v* v1 v2) (sum (map mul (zip v1 v2))))
 
@@ -26,11 +31,13 @@
 
 (define (vec . l) (map list l))
 
-(define (v+ v1 v2) (map sum (zip v1 v2)))
+(define (v+ v1 v2) (map sum (zip v1 v2))) ; despite name, use m+ to add vectors
 (define (m+ m1 m2) (map (partial apply v+) (zip m1 m2)))
 
 (define (deep-apply f m) (map (partial map f) m))
 (define (s* k m) (deep-apply (partial * k) m))
+(define (recenter center scale)
+  (compose (partial m+ center) (partial s* scale)))
 
 (define (det2by2 m)
   (match m [(list (list a b) (list c d)) (- (* a d) (* b c))]))
@@ -78,8 +85,11 @@
       (if (< (length l) n) (cons l '())
           (cons (take l n) (split (drop l n) n)))))
 
-(define (make-mat dim l) (split l dim))
-; (define m (make-mat 2 '(1 2 3 4)))
+;(define (make-mat dim l) (split l dim))
+;; (define m (make-mat 2 '(1 2 3 4)))
+(define (make-mat . l) (split l (sqrt (length l))))
+;(equal? m (make-mat 1 2 3 4)) ;#t
+
 
 (define (all-matrices dim top)
   (map (lambda (l) (split l dim)) (all-vals dim top)))
@@ -101,6 +111,21 @@
   (map (app impulse _ (length l)) l))
 
 (define (rot-mat n) (perm (map (lambda (x) (modulo x n)) (iota n 1))))
+(define (make-orthog-mat v)
+  (match-let ([(list (list a) (list b)) v])
+    (make-mat a (- b) b a)))
+(define (trans-rot-mat theta) ;in radians
+  (make-orthog-mat (vec (cos theta) (sin theta))))
+(define turn->rad (app * 2 pi _))
+(define (nth-rot-mat n) (trans-rot-mat (turn->rad (/ 1 n))))
+(define (nth-roots n)
+  (let ([m (nth-rot-mat n)])
+    (define (nth-roots-aux cnt accum)
+      (if (= cnt (dec n)) accum
+          (let ([next-pt (m* m (car accum))])
+            (nth-roots-aux (inc cnt) (cons next-pt accum)))))
+    (reverse (nth-roots-aux 0 (list (vec 1 0))))))
+
 (define (conjoin m1 m2)
   (let ([l1 (length (car m1))]
         [l2 (length (car m2))])
@@ -420,9 +445,10 @@
   (iota total-count residue modulus))
 (define (odds n) (same-residue n 2 1))
 
-(map-and-show
- (lambda (n) (extention-to-cycles (fxn-extention (partial * 2) n)))
- (odds 10))
+;(map-and-show
+; (lambda (n) (extention-to-cycles (fxn-extention (partial * 2) n)))
+; (odds 10))
+
 ;'((1 (0))
 ;  (3 (1 2) (0))
 ;  (5 (1 3 4 2) (0))
@@ -440,26 +466,18 @@
 (define (get-mult-cycles n k)
   (map (lambda (x) x) (extention-to-cycles (fxn-extention (partial * k) n))))
 
-(map-and-show
- (lambda (n)
-   (map (partial get-mult-cycles n) '(2 3 6)))
- (cddr (primes-up-to 20)))
+;(map-and-show
+; (lambda (n)
+;   (map (partial get-mult-cycles n) '(2 3 6)))
+; (cddr (primes-up-to 20)))
 
 (define (gcd a b) (if (= b 0) a (gcd b (modulo a b))))
 (define (coprime? a b) (= 1 (gcd a b)))
 (define (get-coprimes a) (filter (partial coprime? a) (range 2 a)))
 
-(map-and-show (partial coprime? 5) (iota 10 3))
-;'((3 . #t)
-;  (4 . #t)
-;  (5 . #f)
-;  (6 . #t)
-;  (7 . #t)
-;  (8 . #t)
-;  (9 . #t)
-;  (10 . #f)
-;  (11 . #t)
-;  (12 . #t))
+;(map-and-show (partial coprime? 5) (iota 10 3))
+; '((3 . #t) (4 . #t) (5 . #f) (6 . #t) (7 . #t) (8 . #t) (9 . #t) (10 . #f) (11 . #t) (12 . #t))
+
 (define (h- n) (/ (- n 1) 2))
 (define (h+ n) (/ (+ n 1) 2))
 ;(all (map (lambda (n) (coprime? n (/ (+ n 1) 2))) (cdr (odds 100)))) ;#t
@@ -527,7 +545,7 @@
   (define (simple-cont-frac-aux coeffs result)
     ;(display (if (not (= 0 (caadr result))) (/ (caar result) (caadr result)) result)) (newline)
     (if (null? coeffs) result
-        (let ([m (make-mat 2 (list (car coeffs) 1 1 0))])
+        (let ([m (make-mat (car coeffs) 1 1 0)])
           (simple-cont-frac-aux (cdr coeffs) (m* m result)))))
   (match (simple-cont-frac-aux (reverse coeffs) (vec 1 0))
     [(list (list n) (list d)) (/ n d)]))
@@ -556,7 +574,7 @@
                 [(list (list n-3) (list d-3)) s-3])
       (letrec ([n (+ (* next-coeff n-1) (/ (* n-2 d-1) d-2))]
                [d (+ d-3 (* next-coeff d-1))]
-               [m (make-mat 2 (list next-coeff (/ n-1 d) (/ d-2 n) next-coeff))]
+               [m (make-mat next-coeff (/ n-1 d) (/ d-2 n) next-coeff)]
                [result (m* m s-1)])
         (cons result (app f-aux _ result s-1 s-2))))))))
   (f-aux next-coeff #f #f #f))
@@ -566,15 +584,13 @@
       (match-let ([(cons c new-f) (f (car coeffs))])
         (cons c (apply-stream new-f (cdr coeffs))))))
 
-(define (get-m coeff) (make-mat 2 (list 0 1 1 (- coeff))))
+(define (get-m coeff) (make-mat 0 1 1 (- coeff)))
 (define tsra (function (lambda (x) (/ 1 (- x 1))) -1 3))
 
 (define (stat-diff f)
   (lambda (x) (let ([dx .001]) (/ (- (f (+ x dx)) (f x)) dx))))
 
 (define test-poly '((0 . 2) (3 . 4))) ; 2 + 4x^3
-(define dec (app - _ 1))
-(define inc (app + _ 1))
 
 (define (diff poly)
   ; (diff p) ; 12x^2
@@ -662,11 +678,11 @@
 (define (cont-frac-neg-sqrt2 x) (+ -1 (/ 1 (+ -1 x))))
 
 (define (newton-sqrt2 x) (/ (+ (* x x) 2) (* 2 x)))
-(plot (list (function (lambda (x) x) -2 2)
-            (function cont-frac-sqrt2 -2 2)
-            (function cont-frac-neg-sqrt2 -2 2)
-            (function newton-sqrt2 -2 2))
-      #:y-min -2 #:y-max 2)
+;(plot (list (function (lambda (x) x) -2 2)
+;            (function cont-frac-sqrt2 -2 2)
+;            (function cont-frac-neg-sqrt2 -2 2)
+;            (function newton-sqrt2 -2 2))
+;      #:y-min -2 #:y-max 2)
 
 (define (scalar*poly s p)
   (map (match-lambda ((cons pow coeff) (cons pow (* s coeff)))) p))
@@ -732,3 +748,90 @@
       (match shifted-taylor
         ((list (cons 2 a) (cons 1 b) (cons 0 c) ...)
          (exact->inexact (- (/ b (* 2 a)))))))))
+
+
+;;;;;;;;;;; cellular automata stuff ;;;;;;;;
+;; the only nice thing about cellular automata is locality
+; otherwise just use automorphisms on Z/nZ
+
+(define (transition l)
+  (match l
+    [(cons a (cons b rest)) (cons a (cons (xor a b) rest))]))
+
+;(define (transition l)
+;  (match l
+;    [(cons a (cons b rest)) (cons (xor a b) (cons b rest))]))
+
+(define (action l)
+  (map (lambda (i) (list-set l i (xor #t (list-ref l i))))
+       (range (length l))))
+
+(define (boolean->integer b) (if b 1 0))
+(define (state-diff s1 s2) (sum (map boolean->integer (map xor s1 s2))))
+
+(define (all-pairs l)
+  (if (= 2 (length l)) (list (cons (car l) (cadr l)))
+      (append (map (partial cons (car l)) (cdr l)) (all-pairs (cdr l)))))
+
+(define (total-diff states)
+  (map (lambda (p) (state-diff (car p) (cdr p))) (all-pairs states)))
+
+(define (next-states l)
+  (map transition (action l)))
+
+(define all-boolean-lists
+  (let ([bools '(#t #f)])
+    (cartesian-product bools bools)))
+
+;(map (lambda (init-state) (total-diff (next-states init-state))) all-boolean-lists)
+;'((1 3 2) (1 3 2) (1 3 2) (1 3 2) (1 3 2) (1 3 2) (1 3 2) (1 3 2))
+
+; total diff invariant on init state -- no power seeking
+; why is this happening with xors
+; can I cook up something where should definitely depend on starting state?
+
+;;; Fun with semi-rings ;;;;;;;;;;
+
+(define (mod= x y n) (eq? 0 (modulo (- x y) n)))
+
+(define (fish n)
+  (filter (lambda (x) (cadr x))
+          (enumerate (map (lambda (a) (findf (lambda (a*) (mod= a* (+ 1 (* a a*)) n))
+                                             (iota n)))
+                          (iota n)))))
+
+(define (list->pair l) (cons (car l) (cadr l)))
+(define (pair->list p) (cons (car p) (cons (cdr p) '())))
+
+(define (pts-within radius)
+  (let ([rng (range (- radius) (inc radius))])
+    (map list->pair (cartesian-product rng rng))))
+
+(define (g* p1 p2)
+  (match-let ([(cons a b) p1]
+              [(cons c d) p2])
+    (cons (+ (* a c) (* b d)) (+ (* a d) (* b c)))))
+
+(define (g+ p1 p2)
+  (match-let ([(cons a b) p1]
+              [(cons c d) p2])
+    (cons (+ a c) (+ b d))))
+
+(define (find-a* a radius)
+  (findf (lambda (a*) (equal? a* (g+ (cons 1 0) (g* a a*)))) (pts-within radius)))
+
+(define (inv x domain-size)
+  (findf (lambda (x-inv) (= 1 (modulo (* x x-inv) domain-size)))
+         (range 1 domain-size)))
+
+(define (get-invs domain-size)
+  (remove (lambda (p) (> (cdr p) (car p)))
+          (map-and-show (app inv _ domain-size) (range 1 domain-size))))
+
+;(map-and-show (app inv _ 11) (range 1 10))
+;'((1 . 1) (2 . 6) (3 . 4) (4 . 3) (5 . 9) (6 . 2) (7 . 8) (8 . 7) (9 . 5))
+
+(require graph graphviz)
+(define g (graphviz (unweighted-graph/undirected (map pair->list (get-invs 13)))))
+;(dot->pict g)
+; not very helpful because want to see ordering

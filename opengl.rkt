@@ -6,7 +6,7 @@
 (define (resize w h)
   (glViewport 0 0 w h))
 
-(define p (last (primes-up-to 200)))
+(define p (last (primes-up-to 300)))
 (define pts (map (recenter (vec 0.5 0.5) 0.5) (nth-roots p)))
 
 (define (draw-opengl)

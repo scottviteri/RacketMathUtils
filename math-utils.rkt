@@ -10,7 +10,6 @@
 
 (provide (all-defined-out))
 
-
 (define m '((1 2) (3 4)))
 (define (mat-row m j) (list-ref m j))
 
@@ -85,11 +84,8 @@
       (if (< (length l) n) (cons l '())
           (cons (take l n) (split (drop l n) n)))))
 
-;(define (make-mat dim l) (split l dim))
-;; (define m (make-mat 2 '(1 2 3 4)))
 (define (make-mat . l) (split l (sqrt (length l))))
 ;(equal? m (make-mat 1 2 3 4)) ;#t
-
 
 (define (all-matrices dim top)
   (map (lambda (l) (split l dim)) (all-vals dim top)))
@@ -111,6 +107,7 @@
   (map (app impulse _ (length l)) l))
 
 (define (rot-mat n) (perm (map (lambda (x) (modulo x n)) (iota n 1))))
+
 (define (make-orthog-mat v)
   (match-let ([(list (list a) (list b)) v])
     (make-mat a (- b) b a)))
@@ -119,12 +116,7 @@
 (define turn->rad (app * 2 pi _))
 (define (nth-rot-mat n) (trans-rot-mat (turn->rad (/ 1 n))))
 (define (nth-roots n)
-  (let ([m (nth-rot-mat n)])
-    (define (nth-roots-aux cnt accum)
-      (if (= cnt (dec n)) accum
-          (let ([next-pt (m* m (car accum))])
-            (nth-roots-aux (inc cnt) (cons next-pt accum)))))
-    (reverse (nth-roots-aux 0 (list (vec 1 0))))))
+  (accum (partial m* (nth-rot-mat n)) (vec 1 0) n))
 
 (define (conjoin m1 m2)
   (let ([l1 (length (car m1))]
@@ -154,21 +146,20 @@
 (define (quats n)
   (filter (lambda (x) (= 1 (modulo (* x x x x) n))) (iota n)))
 
-(define (enumerate l) (zip (iota (length l)) l))
-(define (count-sqrts n) (enumerate (map (compose length sqrts) (iota n))))
-(define (is-prime n)
+(define (enumerate l) (map cons (iota (length l)) l))
+
+(define (count-sqrts n) ;(count-sqrts 5) ;'((0 . 0) (1 . 0) (2 . 1) (3 . 2) (4 . 2))
+  (enumerate (map (compose length sqrts) (iota n))))
+(define (prime? n) ;(prime? 97) ;#t
   (all (map (lambda (d) (not (= 0 (modulo n d))))
             (iota (- n 2) 2))))
-(define (primes-up-to n)
-  (filter is-prime (iota (- n 1) 2)))
+(define (primes-up-to n) (filter prime? (iota (- n 1) 2)))
 
 (define (power-period base domain-size)
   (if (= base 0) 0
       (let ([l (filter (lambda (k) (= 1 (modulo (expt base k) domain-size)))
                        (iota (- domain-size 1) 1))])
         (if (null? l) domain-size (car l)))))
-
-(define (check m) (and (= (caar m) (caadr m)) (= (cadar m) (- 5 (cadadr m)))))
 
 (define (m-pows m k mod) (map (lambda (x) (m-pow-mod m x mod)) (iota k)))
 
@@ -281,6 +272,8 @@
 
 ; looking for (x y) st x^2+y^2 = 1, and ((x -y) (y x))^k = ((1 0)(0 1))
 (define (find-rotation field-size rotation-size)
+  ;(map (partial find-rotation 7) (iota 10))
+  ;'(#f (1 0) (6 0) #f (0 1) #f #f #f (2 2) #f)
   (findf (lambda (p) (check-rotation (car p) (cadr p) field-size rotation-size))
          (cartesian-product (iota field-size) (iota field-size))))
 
@@ -306,6 +299,7 @@
 (define r '((2 2) (5 2)))
 
 (define (pt-to-rot pt field-size)
+  ;(pt-to-rot (vec 1 2) 7) ;'((1 5) (2 1))
   (m-mod (apply xy-to-rot-mat (apply append pt)) field-size))
 
 (define (points-to-rots pts field-size)
@@ -326,6 +320,7 @@
          (take (enumerate pts) how-many))))
 
 (define (points-to-face-flips pts field-size)
+  ;(points-to-face-flips 4gon 7) ;'(((0 1) (1 0)) ((0 6) (6 0)))
   (let ([r (pt-to-rot (list-ref pts 1) field-size)]
         [f `((1 0) (0 ,(- field-size 1)))]
         [how-many (if (= 0 (modulo (length pts) 2)) (/ (length pts) 2) 0)]
@@ -339,17 +334,19 @@
          (take (enumerate pts) how-many))))
 
 (define (points-to-matrices pts field-size)
+  ;(points-to-matrices 4gon 7) ;'(((1 0) (0 1)) ((0 6) (1 0)) ...
   (append (points-to-rots pts field-size)
           (points-to-vertex-flips pts field-size)
           (points-to-face-flips pts field-size)))
 
 (define (get-dihedral-matrices field-size polygon-size)
+  ;(get-dihedral-matrices 67 17) ;'(((1 0) (0 1)) ((7 35) (32 7))
   (letrec ([point1 (find-rotation field-size polygon-size)]
            [vertices (rot-mat-to-vertices (apply xy-to-rot-mat point1)
                                           field-size polygon-size)])
     (points-to-matrices vertices field-size)))
 
-(define (check-matrices polygon-size)
+(define (check-matrices polygon-size) ;(check-matrices 5) ;#t
   (let ([field-size (find-field-size polygon-size)])
     (m= (dihedral-cayley polygon-size)
         (m-mod-cayley (get-dihedral-matrices field-size polygon-size) field-size))))
@@ -795,10 +792,9 @@
 (define (mod= x y n) (eq? 0 (modulo (- x y) n)))
 
 (define (fish n)
-  (filter (lambda (x) (cadr x))
-          (enumerate (map (lambda (a) (findf (lambda (a*) (mod= a* (+ 1 (* a a*)) n))
-                                             (iota n)))
-                          (iota n)))))
+  (enumerate (filter-map (lambda (a) (findf (lambda (a*) (mod= a* (+ 1 (* a a*)) n))
+                                            (iota n)))
+                         (iota n))))
 
 (define (list->pair l) (cons (car l) (cadr l)))
 (define (pair->list p) (cons (car p) (cons (cdr p) '())))

@@ -3,10 +3,12 @@
 (require srfi/1)
 (require (only-in racket/list remove-duplicates cartesian-product index-of))
 (require racket/set)
-(require (only-in relation partial app curry andf onto))
+(require (only-in relation app andf onto)) ;curry
 (require racket/match)
 (require racket/stream)
+(require lens) ;package lens-lib
 (require plot)
+(require graph graphviz)
 
 (provide (all-defined-out))
 
@@ -15,14 +17,15 @@
 
 (define (mat-col m i) (map car m))
 (define (mat-ind m j i) (list-ref (mat-row m j) i))
-(define sum (partial apply +))
-(define mul (partial apply *))
+(define sum (curry apply +))
+(define mul (curry apply *))
 (define dec (app - _ 1))
-(define inc (partial + 1))
+(define inc (curry + 1))
+(define id (lambda (x) x))
 
 (define (v* v1 v2) (sum (map mul (zip v1 v2))))
 
-(define transpose (partial apply zip))
+(define transpose (curry apply zip))
 
 (define (m* m1 m2)
   (let ([m2t (transpose m2)])
@@ -31,12 +34,12 @@
 (define (vec . l) (map list l))
 
 (define (v+ v1 v2) (map sum (zip v1 v2))) ; despite name, use m+ to add vectors
-(define (m+ m1 m2) (map (partial apply v+) (zip m1 m2)))
+(define (m+ m1 m2) (map (curry apply v+) (zip m1 m2)))
 
-(define (deep-apply f m) (map (partial map f) m))
-(define (s* k m) (deep-apply (partial * k) m))
+(define (deep-apply f m) (map (curry map f) m))
+(define (s* k m) (deep-apply (curry * k) m))
 (define (recenter center scale)
-  (compose (partial m+ center) (partial s* scale)))
+  (compose (curry m+ center) (curry s* scale)))
 
 (define (det2by2 m)
   (match m [(list (list a b) (list c d)) (- (* a d) (* b c))]))
@@ -54,7 +57,7 @@
 
 (define (m= m1 m2)
   (and (eq? (length m1) (length m2))
-       (all (map (partial apply v=) (zip m1 m2)))))
+       (all (map (curry apply v=) (zip m1 m2)))))
 
 (define (square m) (m* m m))
 
@@ -116,7 +119,7 @@
 (define turn->rad (app * 2 pi _))
 (define (nth-rot-mat n) (trans-rot-mat (turn->rad (/ 1 n))))
 (define (nth-roots n)
-  (accum (partial m* (nth-rot-mat n)) (vec 1 0) n))
+  (accum (curry m* (nth-rot-mat n)) (vec 1 0) n))
 
 (define (conjoin m1 m2)
   (let ([l1 (length (car m1))]
@@ -154,6 +157,12 @@
   (all (map (lambda (d) (not (= 0 (modulo n d))))
             (iota (- n 2) 2))))
 (define (primes-up-to n) (filter prime? (iota (- n 1) 2)))
+
+;(define (factor n)
+;  (let ((ps (primes-up-to n)))
+;    (define (factor-aux n res)
+;      ())
+
 
 (define (power-period base domain-size)
   (if (= base 0) 0
@@ -272,7 +281,7 @@
 
 ; looking for (x y) st x^2+y^2 = 1, and ((x -y) (y x))^k = ((1 0)(0 1))
 (define (find-rotation field-size rotation-size)
-  ;(map (partial find-rotation 7) (iota 10))
+  ;(map (curry find-rotation 7) (iota 10))
   ;'(#f (1 0) (6 0) #f (0 1) #f #f #f (2 2) #f)
   (findf (lambda (p) (check-rotation (car p) (cadr p) field-size rotation-size))
          (cartesian-product (iota field-size) (iota field-size))))
@@ -407,10 +416,12 @@
 ; it is a spec of fxns that when applied twice, multiplies each element in Z/nZ by 2
 
 (define (map-and-show f l) (map cons l (map f l)))
-;(map-and-show (partial * 2) (range 2 5)) ;'((2 . 4) (3 . 6) (4 . 8))
+;(map-and-show (curry * 2) (range 2 5)) ;'((2 . 4) (3 . 6) (4 . 8))
+
+(define (filter-map-and-show f l) (filter cdr (map-and-show f l)))
 
 (define (fxn-extention f n)
-  ;(fxn-extention (partial * 2) 3) ;'((0 . 0) (1 . 2) (2 . 1))
+  ;(fxn-extention (curry * 2) 3) ;'((0 . 0) (1 . 2) (2 . 1))
   (map-and-show (compose (lambda (x) (modulo x n)) f) (iota n)))
 
 (define (list-rotate l) (append (cdr l) (list (car l))))
@@ -427,7 +438,7 @@
   (list-rectify (reverse (cycle-starting-at-aux k '()))))
 
 (define (extention-to-cycles ext)
-  ;(extention-to-cycles (fxn-extention (partial * 2) 3)) ;'((0) (1 2))
+  ;(extention-to-cycles (fxn-extention (curry * 2) 3)) ;'((0) (1 2))
   (define (extention-to-cycles-aux cycles uncovered)
     (if (member 'timeout cycles) 'timeout
         (if (set-empty? uncovered) cycles
@@ -443,7 +454,7 @@
 (define (odds n) (same-residue n 2 1))
 
 ;(map-and-show
-; (lambda (n) (extention-to-cycles (fxn-extention (partial * 2) n)))
+; (lambda (n) (extention-to-cycles (fxn-extention (curry * 2) n)))
 ; (odds 10))
 
 ;'((1 (0))
@@ -461,18 +472,21 @@
 ; what causes the smaller lengths for non prime Z/nZ
 
 (define (get-mult-cycles n k)
-  (map (lambda (x) x) (extention-to-cycles (fxn-extention (partial * k) n))))
+  (map (lambda (x) x) (extention-to-cycles (fxn-extention (curry * k) n))))
 
 ;(map-and-show
 ; (lambda (n)
-;   (map (partial get-mult-cycles n) '(2 3 6)))
+;   (map (curry get-mult-cycles n) '(2 3 6)))
 ; (cddr (primes-up-to 20)))
+
+
+;;;;;;;;; coprime functions ;;;;;;;;;;
 
 (define (gcd a b) (if (= b 0) a (gcd b (modulo a b))))
 (define (coprime? a b) (= 1 (gcd a b)))
-(define (get-coprimes a) (filter (partial coprime? a) (range 2 a)))
+(define (get-coprimes a) (filter (curry coprime? a) (range 2 a)))
 
-;(map-and-show (partial coprime? 5) (iota 10 3))
+;(map-and-show (curry coprime? 5) (iota 10 3))
 ; '((3 . #t) (4 . #t) (5 . #f) (6 . #t) (7 . #t) (8 . #t) (9 . #t) (10 . #f) (11 . #t) (12 . #t))
 
 (define (h- n) (/ (- n 1) 2))
@@ -499,8 +513,8 @@
 (define (find-index f l) (car (findf (compose f cadr) (enumerate l))))
 
 (define (get-frac-mod numer denom field-size)
-  (find-index (partial = numer)
-              ((map-mod field-size) (partial * denom) (iota field-size))))
+  (find-index (curry = numer)
+              ((map-mod field-size) (curry * denom) (iota field-size))))
 
 ; has to do with coprime functions
 ; want 1/denom mod field-size
@@ -527,6 +541,55 @@
 ; what is the deal with euclidian domains, and is Z/nZ one?
 ; can make an ordering on it based on cycle structure of *k
 ;  namely use denominators as an ordering
+
+; would be nice to visualize fraction functions
+
+; 1/d mod n = (k*n+1)/d where k=-1/n mod d
+; -1/n mod d = (d - 1/n mod d)
+; 1/d mod n = ((d - 1/n mod d)*n+1)/d
+
+;(maybe just because smaller?)
+; 1/d mod n = ((d - 1/n%d mod d)*n + 1)/d
+
+(define (inv x domain-size)
+  (findf (lambda (x-inv) (= 1 (modulo (* x x-inv) domain-size)))
+         (range 1 domain-size)))
+
+(define (bind ma . fs) ; forward composition
+  ; bind : m a -> [a -> m a] -> m a ;kinda
+  ;(bind 3 (app - _ 1) (curry * 2)) ;4
+  ;(bind #f (app - _ 1) (curry * 2)) ;#f
+  ;(bind 3 (lambda (x) #f) (curry * 2)) ;#f
+  (define (bind-aux ma fs)
+    (if (null? fs) ma
+        (let ([mb (if ma ((car fs) ma) ma)])
+          (bind-aux mb (cdr fs)))))
+  (bind-aux ma fs))
+
+;(define (get-invs domain-size)
+;  (filter-map (lambda (a) (let ([a-inv (inv a domain-size)])
+;                            ((lift (app cons a _))
+;                             (if (<= a-inv)) ))
+;                (range 1 domain-size))))
+
+(define (get-invs domain-size)
+  (remove (lambda (p) (> (cdr p) (car p)))
+          (filter-map-and-show (app inv _ domain-size) (range 1 domain-size))))
+
+;(map-and-show (app inv _ 11) (range 1 10))
+;'((1 . 1) (2 . 6) (3 . 4) (4 . 3) (5 . 9) (6 . 2) (7 . 8) (8 . 7) (9 . 5))
+
+; (3n+1)/4 if n
+;(define (fast-inv d n)
+;  (if (or (= 0 d) (= 0 (modulo n d))) #f
+;      (if (= 1 d) 1
+;          (match ([tsra ]))
+;          (/ (+ 1 (* n (- d (fast-inv (modulo n d) d)))) d))))
+
+; what is issue? that could turn into false
+;
+
+
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
@@ -729,11 +792,11 @@
 (define sqrt2-poly '((2 . 1) (0 . -2)))
 (define cubrt2-poly '((3 . 1) (0 . -2)))
 (define crazy-poly '((7 . 1) (5 . -5) (4 . 5/2) (3 . 1) (2 . -2) (0 . 9)))
-;(close (find-fixed-pt (partial newtons-method crazy-poly) 2)
-;       (find-fixed-pt (partial quadratic-newtons-method crazy-poly) 2))
+;(close (find-fixed-pt (curry newtons-method crazy-poly) 2)
+;       (find-fixed-pt (curry quadratic-newtons-method crazy-poly) 2))
 
 (define (quadratic-minimizing-newtons-method poly pt)
-  ;(find-fixed-pt (partial quadratic-minimizing-newtons-method '((4 . 1) (0 . -2))) 9 #t 20)
+  ;(find-fixed-pt (curry quadratic-minimizing-newtons-method '((4 . 1) (0 . -2))) 9 #t 20)
   ; currently not converging
   (letrec ([dp (diff poly)]
            [d2p (diff dp)]
@@ -768,7 +831,7 @@
 
 (define (all-pairs l)
   (if (= 2 (length l)) (list (cons (car l) (cadr l)))
-      (append (map (partial cons (car l)) (cdr l)) (all-pairs (cdr l)))))
+      (append (map (curry cons (car l)) (cdr l)) (all-pairs (cdr l)))))
 
 (define (total-diff states)
   (map (lambda (p) (state-diff (car p) (cdr p))) (all-pairs states)))
@@ -791,10 +854,16 @@
 
 (define (mod= x y n) (eq? 0 (modulo (- x y) n)))
 
+(define (lift f)
+  (define (lft-aux f . args)
+    (if (all args) (apply f args) #f))
+  (curry lft-aux f))
+
 (define (fish n)
-  (enumerate (filter-map (lambda (a) (findf (lambda (a*) (mod= a* (+ 1 (* a a*)) n))
-                                            (iota n)))
-                         (iota n))))
+  (filter-map (lambda (a) ((lift (app cons a _))
+                           (findf (lambda (a*) (mod= a* (+ 1 (* a a*)) n))
+                                  (iota n))))
+       (iota n)))
 
 (define (list->pair l) (cons (car l) (cadr l)))
 (define (pair->list p) (cons (car p) (cons (cdr p) '())))
@@ -816,18 +885,6 @@
 (define (find-a* a radius)
   (findf (lambda (a*) (equal? a* (g+ (cons 1 0) (g* a a*)))) (pts-within radius)))
 
-(define (inv x domain-size)
-  (findf (lambda (x-inv) (= 1 (modulo (* x x-inv) domain-size)))
-         (range 1 domain-size)))
-
-(define (get-invs domain-size)
-  (remove (lambda (p) (> (cdr p) (car p)))
-          (map-and-show (app inv _ domain-size) (range 1 domain-size))))
-
-;(map-and-show (app inv _ 11) (range 1 10))
-;'((1 . 1) (2 . 6) (3 . 4) (4 . 3) (5 . 9) (6 . 2) (7 . 8) (8 . 7) (9 . 5))
-
-(require graph graphviz)
 (define g (graphviz (unweighted-graph/undirected (map pair->list (get-invs 13)))))
 ;(dot->pict g)
 ; not very helpful because want to see ordering

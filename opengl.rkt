@@ -6,7 +6,7 @@
 (define (resize w h)
   (glViewport 0 0 w h))
 
-(define p (last (primes-up-to 300)))
+(define p (last (primes-up-to 200)))
 (define pts (map (recenter (vec 0.5 0.5) 0.5) (nth-roots p)))
 
 (define (draw-opengl)
@@ -36,6 +36,7 @@
   (glEnd)
   (glColor3f 1 0 0)
   (glBegin GL_LINES)
+  ;(get-invs p) ;(fish p)
   (for ([pair (get-invs p)])
     (match-let ([(cons i j) pair])
       (vec->vertex (list-ref pts i))
